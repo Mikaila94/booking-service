@@ -1,0 +1,68 @@
+# syntax=docker/dockerfile:1
+
+# ============================================================
+# Stage 1: Build
+# Use a full JDK image to compile the code and produce a JAR
+# ============================================================
+FROM eclipse-temurin:24-jdk AS build
+
+WORKDIR /app
+
+# Copy Gradle wrapper and dependency config first
+# Docker caches these layers — dependencies only re-download when build files change
+COPY gradlew .
+COPY gradle gradle
+COPY build.gradle.kts .
+COPY settings.gradle.kts .
+
+# Download dependencies (cached as a separate layer)
+RUN ./gradlew dependencies --no-daemon
+
+# Copy source code and build the JAR
+COPY src src
+RUN ./gradlew bootJar --no-daemon
+
+# ============================================================
+# Stage 2: Extract layers
+# Spring Boot layered JARs split the app into layers:
+# - dependencies       (changes rarely)
+# - spring-boot-loader (changes rarely)
+# - application        (changes every build)
+# This makes subsequent Docker builds much faster
+# ============================================================
+FROM eclipse-temurin:24-jre AS layers
+
+WORKDIR /app
+
+COPY --from=build /app/build/libs/*.jar app.jar
+
+# Extract the layers from the JAR
+RUN java -Djarmode=layertools -jar app.jar extract
+
+# ============================================================
+# Stage 3: Run
+# Copy each layer separately so Docker can cache them
+# Only the 'application' layer changes when you edit code
+# ============================================================
+FROM eclipse-temurin:24-jre AS run
+
+# Create a non-root user to run the app
+# Running as root inside a container is dangerous —
+# if the app is exploited, the attacker gets root access to the container
+RUN addgroup --system spring && adduser --system --ingroup spring spring
+USER spring
+
+WORKDIR /app
+
+# Copy layers in order of how often they change (least → most)
+# Docker caches each COPY as a separate layer
+COPY --from=layers /app/dependencies/ ./
+COPY --from=layers /app/spring-boot-loader/ ./
+COPY --from=layers /app/snapshot-dependencies/ ./
+COPY --from=layers /app/application/ ./
+
+# The port your Spring Boot app listens on
+EXPOSE 8080
+
+# Use JarLauncher instead of java -jar for layered JARs
+ENTRYPOINT ["java", "org.springframework.boot.loader.launch.JarLauncher"]

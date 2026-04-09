@@ -1,0 +1,34 @@
+# Version control
+.git/
+.gitignore
+
+# IDE
+.idea/
+.vscode/
+.DS_Store
+
+# Build output — Gradle generates this inside Docker, don't copy from host
+build/
+out/
+
+# Gradle cache — not needed, Docker downloads fresh
+.gradle/
+
+# Test files — not needed to build the JAR
+src/test/
+
+# Documentation — not needed in the image
+README*
+*.md
+docs/
+HELP.md
+
+# Secrets — never copy these into an image
+.env*
+*.pem
+*.key
+*.crt
+
+# Logs
+*.log
+tmp/
